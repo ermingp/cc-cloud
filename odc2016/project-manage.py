@@ -4,8 +4,10 @@
 
 
 import os,sys
-from  keystoneclient.v2_0 import client
+from  keystoneclient.v2_0 import client as ks_client
+from novaclient import client as nova_client
 import keystoneclient.exceptions as ex
+
 import json
 import urllib2
 
@@ -22,8 +24,10 @@ except KeyError, e:
   print "Please export the following key: %s, or source the openrc file" % e
   sys.exit(1)
 
-keystone=client.Client(username=username, password=password, \
+keystone=ks_client.Client(username=username, password=password, \
                        tenant_name=tenant_name, auth_url=auth_url)
+
+creds={'api_key': password, 'auth_url': auth_url, 'username': username }
 
 #print type(keystone.tenants.list())
 
@@ -43,7 +47,36 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
     if project == None:
       print "Error, cannot create project and it doesn't exist"
       sys.exit(1)
+  try:
+    # error on duplicate, no error when the user doesn't exist.
+    project.add_user(user=mentor,role=find_role_id())
+    project.add_user(user='mgariepy',role=find_role_id())
+  except ex.Conflict, e:
+    # already a member
+    pass
+ 
+  print project.list_users()
   print project.id
+  set_quota(project=project, config=configuration)  
+  
+  
+def set_quota(project=None, config=None):
+  """
+  nova quota-update $tenant_id --instances $Q_instances --cores $Q_cores \
+    --ram $Q_ram --floating_ips $Q_floatingips --security-groups $Q_sec_group \
+    --security-group-rules $Q_sec_group_rules
+    neutron quota-update --tenant-id $tenant_id --port $Q_ports \
+    --network $Q_network --subnet $Q_subnet --router $Q_router \
+    --floatingip $Q_floatingips
+   cinder quota-update --volumes $Q_volumes --snapshots $Q_snapshots \
+    --gigabytes $Q_gigabytes $tenant_id
+  """
+  #my_creds=creds
+  #my_creds.update('project_id': project)
+  #nova=nova_client.Client('1.1',**creds)
+  pass
+  
+  
   
 def find_project_by_name(name=None):
   """
@@ -55,6 +88,14 @@ def find_project_by_name(name=None):
     if project.name == name:
       my_project=project
   return my_project
+
+def find_role_id(name="Member"):
+  roles_list=keystone.roles.list()
+  role_id=None
+  for role in roles_list:
+    if role.name == name:
+      role_id=role.id
+  return role_id
 
 def add_ssh_key():
   """
