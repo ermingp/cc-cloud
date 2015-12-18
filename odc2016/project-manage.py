@@ -37,12 +37,13 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
   mentor: tenant['odc_application']['mentor']['username']
   """
   try:
-    project=keystone.tenant.create(tenant_name=name, description=description, enabled=True)
+    project=keystone.tenants.create(tenant_name=name, description=description, enabled=True)
   except ex.Conflict, e: 
     project=find_project_by_name(name=name)
     if project == None:
       print "Error, cannot create project and it doesn't exist"
       sys.exit(1)
+  print project.id
   
 def find_project_by_name(name=None):
   """
@@ -113,15 +114,11 @@ if not ccdb_cloud_data.has_key("tenants"):
   sys.exit(1)
 
 ccdb_tenants = ccdb_cloud_data["tenants"]
-for tenant in tenants:
+for tenant in ccdb_tenants:
   if tenant['odc_application']['status'] == "approved":
     create_project(name=tenant['name'], description=tenant['description'], 
                    mentor=tenant['odc_application']['mentor']['username'], 
-                   configuration=tenant['confugirations'])
+                   configuration=tenant['configurations'])
     
   
-
-def create_project(name=None, description=None, mentor=None, configuration=None):
-
-
 
