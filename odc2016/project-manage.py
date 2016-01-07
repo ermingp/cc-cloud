@@ -72,12 +72,12 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
   if project_exist == False:
     n_client=neutron_client.Client('2.0', auth_url=auth_url,username=username, \
                  tenant_name=os.environ['OS_TENANT_NAME'],password=password)
-    network = { 'name': tenant_name.replace(' ','_')+'_network', 
+    network = { 'name': name.replace(' ','_')+'_network', 
                 'admin_state_up': True, 
                 'tenant_id':project.id }
     network_info=n_client.create_network( { 'network': network })
   
-    subnet =  { 'name': tenant_name.replace(' ','_')+'_subnet', 
+    subnet =  { 'name': name.replace(' ','_')+'_subnet', 
                 'network_id': network_info['network']['id'],
                 'tenant_id': network_info['network']['tenant_id'],
                 'cidr': '192.168.%i.0/24' % (randint(0,254)),
@@ -85,9 +85,9 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
                 'ip_version': 4 }
     subnet_info=n_client.create_subnet( { 'subnet': subnet })
     
-    router = { 'name'; tenant_name.replace(' ','_')+'_router',
+    router = { 'name': name.replace(' ','_')+'_router',
                'tenant_id' : network_info['network']['tenant_id'] }
-    router_info=n_client.create_router( 'router': router })
+    router_info=n_client.create_router({ 'router': router })
     # this is specific to East-cloud. (network_id is set to the external network id)
     n_client.add_gateway_router(router_info['router']['id'], {u'enable_snat': True,'network_id': u'f6a2af4a-f7c2-4d68-9c28-63714c931ec0'})
     n_client.add_interface_router(router_info['router']['id'], {'subnet_id': subnet_info['subnet']['id']})
@@ -195,6 +195,7 @@ for tenant in ccdb_tenants:
     create_project(name=tenant['name'], description=tenant['description'], 
                    mentor=tenant['odc_application']['mentor']['username'], 
                    configuration=tenant['configurations'])
+  break
     
   
 
