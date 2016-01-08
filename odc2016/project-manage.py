@@ -31,7 +31,6 @@ except KeyError, e:
 keystone=ks_client.Client(username=username, password=password, \
                        tenant_name=tenant_name, auth_url=auth_url)
 
-creds={'api_key': cloud_admin_password, 'auth_url': auth_url, 'username': cloud_admin }
 
 #print type(keystone.tenants.list())
 
@@ -60,6 +59,8 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
     project.add_user(user=mentor,role=find_role_id())
     project.add_user(user='mgariepy',role=find_role_id())
     project.add_user(user='cccs',role=find_role_id())
+    # hack to be able to create the vm in the project.
+    project.add_user(user=username,role=find_role_id())
   except ex.Conflict, e:
     # already a member
     pass
@@ -91,6 +92,7 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
     # this is specific to East-cloud. (network_id is set to the external network id)
     n_client.add_gateway_router(router_info['router']['id'], {u'enable_snat': True,'network_id': u'f6a2af4a-f7c2-4d68-9c28-63714c931ec0'})
     n_client.add_interface_router(router_info['router']['id'], {'subnet_id': subnet_info['subnet']['id']})
+    
 
 def set_quota(project=None, config=None):
   """
@@ -129,20 +131,147 @@ def find_role_id(name="Member"):
       role_id=role.id
   return role_id
 
-def add_ssh_key():
-  """
-  This function will add the public key to a user.
-  this need to be run from the user account (cccs/cloud-adm or something else.)
-  """
-  
-  pass
-
-def build_instance():
+def build_instance(my_tenant, config_data):
   """
   This function will create the instance, associate the floating ip, and 
   configure security rules (ssh/rdesktop, + something else).
   this need to be run from the user account (cccs/cloud-adm or something else.)
   """
+  nova=nova_client.Client('2',username,password,my_tenant, auth_url=auth_url)
+  nova.authenticate()
+  image=None
+  flavor=None
+  flavor=nova.flavor.find(name="c2-3.75gb-92")
+  if 'ubuntu' in config_data['os_name'].lower():
+     image=nova.images.find(name='Ubuntu_14.04_Trusty-amd64-20150708')
+     cloud-init="""#cloud-config
+users:
+  - name: odc2016
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - %%%CLOUD_SSH_KEY%%%
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMWvDGqgdTGEW44E/tfBAeOKYSRj0qA8JAQxCyP+gW039Sq6d7j2MVocdQQWnjMeW5PfvccRmGRsMizwNR1hoLvfA5R9S4pndl+EiAIpupolLntKqfAkX7zk5sV2wEQaU2k+wPGIvIf2t/ENxN9LvggYmnxNpxn8rhE9PYiLX7gqYETipprDLm4e7eO+SR5IuYMvHC9Dx6Oja6niZqwcC1OBZjglCJM/hJ4z672Y9PjI76Ah+BS4vlkDDwfT4dtoh4V13rrlOQ6RIky3IUcuAVyORjlUrnRGxGN5RDMLfPz+WJx1lEInXNa/CvRzu+zdJOLFprMKUn950FkYr6fdcd mgariepy@mgariepy-Latitude-E6330
+
+package_upgrade: true
+
+packages:
+    - apache2-bin
+    - wget
+    - mysql-server
+    - libapache2-mod-php5
+    - php5
+    - php5-mysql
+    - r-base
+    - gdebi-core
+    - python-pip
+    - libzmqpp3
+    - libzmqpp-dev
+
+# manual install for ipython/jupyter, globus and RStudio
+runcmd:
+ - [ pip, install, jupyter ]
+ - [ wget, "https://s3.amazonaws.com/connect.globusonline.org/linux/stable/globusconnectpersonal-latest.tgz", -O, /tmp/globusconnectpersonal-latest.tgz ]
+ - [ tar, zxvf, /tmp/globusconnectpersonal-latest.tgz, -C, /home/odc2016 ]
+ - [ chown, -R, odc2016., /home/odc2016 ]
+ - [ wget, "https://download2.rstudio.org/rstudio-server-0.99.489-amd64.deb", -O, /tmp/rstudio-server-0.99.489-amd64.deb ]
+ - [ gdebi, --n, /tmp/rstudio-server-0.99.489-amd64.deb ]
+
+# Could maybe use this function?
+# phone_home: if this dictionary is present, then the phone_home
+# cloud-config module will post specified data back to the given
+# url
+# default: none
+# phone_home:
+#  url: http://my.foo.bar/$INSTANCE/
+#  post: all
+#  tries: 10
+#
+#phone_home:
+# url: http://my.example.com/$INSTANCE_ID/
+# post: [ pub_key_dsa, pub_key_rsa, pub_key_ecdsa, instance_id ]
+
+power_state:
+ delay: "+2"
+ mode: reboot
+ timeout: 30
+""".replace("%%%CLOUD_SSH_KEY%%%",config_data['ssh_public_key'])
+  elif 'centos' in config_data['os_name'].lower():
+     image=nova.images.find(name='CentOS-7-x86_64-GenericCloud-1508')
+     cloud_init="""#cloud-config
+users:
+  - name: odc2016
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - %%%CLOUD_SSH_KEY%%%
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMWvDGqgdTGEW44E/tfBAeOKYSRj0qA8JAQxCyP+gW039Sq6d7j2MVocdQQWnjMeW5PfvccRmGRsMizwNR1hoLvfA5R9S4pndl+EiAIpupolLntKqfAkX7zk5sV2wEQaU2k+wPGIvIf2t/ENxN9LvggYmnxNpxn8rhE9PYiLX7gqYETipprDLm4e7eO+SR5IuYMvHC9Dx6Oja6niZqwcC1OBZjglCJM/hJ4z672Y9PjI76Ah+BS4vlkDDwfT4dtoh4V13rrlOQ6RIky3IUcuAVyORjlUrnRGxGN5RDMLfPz+WJx1lEInXNa/CvRzu+zdJOLFprMKUn950FkYr6fdcd mgariepy@mgariepy-Latitude-E6330
+
+package_upgrade: true
+
+yum_repos:
+    epel:
+        baseurl: http://download.fedoraproject.org/pub/epel/7/$basearch
+        enabled: true
+        gpgcheck: false
+        gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7
+        name: Extra Packages for Enterprise Linux 7 - $basearch
+
+packages:
+    - epel-release
+    - wget
+    - httpd
+    - mariadb.x86_64
+    - php.x86_64
+    - R.x86_64
+    - python-pip
+    - python-devel
+    - zeromq
+    - zeromq-devel
+    - xorg-x11-xauth.x86_64
+
+# manual install for ipython/jupyter, globus and RStudio
+runcmd:
+ - [ pip, install, jupyter ]
+ - [ wget, "https://s3.amazonaws.com/connect.globusonline.org/linux/stable/globusconnectpersonal-latest.tgz", -O, /tmp/globusconnectpersonal-latest.tgz ]
+ - [ tar, zxvf, /tmp/globusconnectpersonal-latest.tgz, -C, /home/odc2016 ]
+ - [ chown, -R, odc2016., /home/odc2016 ]
+ - [ wget, "https://download2.rstudio.org/rstudio-server-rhel-0.99.489-x86_64.rpm", -O, /tmp/rstudio-server-rhel-0.99.489-x86_64.rpm ]
+ - [ yum, install, --nogpgcheck, -y, /tmp/rstudio-server-rhel-0.99.489-x86_64.rpm ]
+
+# Could maybe use this function?
+# phone_home: if this dictionary is present, then the phone_home
+# cloud-config module will post specified data back to the given
+# url
+# default: none
+# phone_home:
+#  url: http://my.foo.bar/$INSTANCE/
+#  post: all
+#  tries: 10
+#
+#phone_home:
+# url: http://my.example.com/$INSTANCE_ID/
+# post: [ pub_key_dsa, pub_key_rsa, pub_key_ecdsa, instance_id ]
+
+power_state:
+ delay: "+2"
+ mode: reboot
+ timeout: 30
+""".replace("%%%CLOUD_SSH_KEY%%%",config_data['ssh_public_key'])
+  elif 'windows' in config_data['os_name'].lower():
+     image=None
+     cloud_init="""some cloud init for windows.."""
+     
+  else:
+     return -1
+  if flavor is not None and image is not None:
+      server=nova.servers.create("ODC2016",flavor=flavor, image=image,userdata=cloud_init)
+      floating_ip=nova.floating_ips.create('net04_ext')
+      nova.servers.add(server, floating_ip)
+      return floating.ip # the ipv4
+      
+      
+   
+
   pass
 
 def get_data_from_ccdb():
@@ -182,6 +311,7 @@ def push_data_to_ccdb():
   This function will push data to CCDB, ip of the instances and inform that 
   the project is created.
   """
+  
   pass
 
 ccdb_cloud_data=get_data_from_ccdb()
@@ -195,6 +325,7 @@ for tenant in ccdb_tenants:
     create_project(name=tenant['name'], description=tenant['description'], 
                    mentor=tenant['odc_application']['mentor']['username'], 
                    configuration=tenant['configurations'])
+    build_instance(my_tenant=tenant['name'],config=tenant['odc_application'])
   break
     
   
