@@ -7,11 +7,13 @@ import os,sys
 from  keystoneclient.v2_0 import client as ks_client
 from novaclient import client as nova_client
 from neutronclient.neutron import client as neutron_client
+from cinderclient import client as cinder_client
 import keystoneclient.exceptions as ex
 
 import json
 import urllib2
 from random import randint
+import time
 
 # read env for needed vars
 try:
@@ -22,8 +24,6 @@ try:
   cloud_api_key=os.environ['CLOUD_API_KEY']
   cloud_api_host=os.environ['CLOUD_API_HOST']
   cloud=os.environ['CLOUD']
-  cloud_admin=os.environ['CLOUD_ADMIN']
-  cloud_admin_password=os.environ['CLOUD_ADMIN_PASSWORD']
 except KeyError, e:
   print "Please export the following key: %s, or source the openrc file" % e
   sys.exit(1)
@@ -32,7 +32,6 @@ keystone=ks_client.Client(username=username, password=password, \
                        tenant_name=tenant_name, auth_url=auth_url)
 
 
-#print type(keystone.tenants.list())
 
 
 def create_project(name=None, description=None, mentor=None, configuration=None):
@@ -65,14 +64,20 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
     # already a member
     pass
  
-  print project.list_users()
-  print project.id
-  #set_quota(project=project, config=configuration)  
+  #print project.list_users()
+  #print project.id
+  set_quota(project=project, config=configuration)  
 
   #create the network, only if the project doesn't already exist. shoud add support to detect when the network already exist at some point.
   if project_exist == False:
     n_client=neutron_client.Client('2.0', auth_url=auth_url,username=username, \
                  tenant_name=os.environ['OS_TENANT_NAME'],password=password)
+    #neutron_quota={'quota': {'floatingip': config['floating-ips'],
+    #                         'network': config['networks'],
+    #                         'router': config['router'],
+    #                         'subnet': config['subnet'],
+    #                         'tenant_id':project.id}}
+    #n_client.
     network = { 'name': name.replace(' ','_')+'_network', 
                 'admin_state_up': True, 
                 'tenant_id':project.id }
@@ -105,13 +110,25 @@ def set_quota(project=None, config=None):
    cinder quota-update --volumes $Q_volumes --snapshots $Q_snapshots \
     --gigabytes $Q_gigabytes $tenant_id
   """
-  #my_creds=creds
-  #my_creds.update('project_id': project)
-  #nova=nova_client.Client('1.1',**creds)
-  pass
-  
-  
-  
+  nova=nova_client.Client('2',username,password,'admin', auth_url=auth_url)
+  nova.authenticate()
+  nova_quota={'cores': config['cores'],
+         'floating_ips': config['floating-ips'],
+         'injected_file_content_bytes': config['injected-file-content-bytes'],
+         'injected_files': config['injected-files'],
+         'instances': config['instances'],
+         'metadata_items': config['metadata-items'],
+         'ram': config['ram'],
+         'security_group_rules': config['security-group-rules'],
+         'security_groups': config['security-groups']}
+  nova.quotas.update(project.id,**nova_quota)
+  cinder=cinder_client.Client('2', username, password, 'admin',auth_url=auth_url)
+  cinder.authenticate()
+  cinder_quota={ 'gigabytes': config['gigabytes'],
+                 'snapshots': config['snapshots'],
+                  'volumes': config['volumes'] }
+  cinder.quotas.update(project.id, **cinder_quota)
+ 
 def find_project_by_name(name=None):
   """
   Find project by name.
@@ -141,10 +158,12 @@ def build_instance(my_tenant, config_data):
   nova.authenticate()
   image=None
   flavor=None
-  flavor=nova.flavor.find(name="c2-3.75gb-92")
+  port=None
+  flavor=nova.flavors.find(name="c2-3.75gb-92")
   if 'ubuntu' in config_data['os_name'].lower():
-     image=nova.images.find(name='Ubuntu_14.04_Trusty-amd64-20150708')
-     cloud-init="""#cloud-config
+    image=nova.images.find(name='Ubuntu_14.04_Trusty-amd64-20150708')
+    port=22
+    cloud_init="""#cloud-config
 users:
   - name: odc2016
     shell: /bin/bash
@@ -197,8 +216,9 @@ power_state:
  timeout: 30
 """.replace("%%%CLOUD_SSH_KEY%%%",config_data['ssh_public_key'])
   elif 'centos' in config_data['os_name'].lower():
-     image=nova.images.find(name='CentOS-7-x86_64-GenericCloud-1508')
-     cloud_init="""#cloud-config
+    image=nova.images.find(name='CentOS-7-x86_64-GenericCloud-1508')
+    port=22
+    cloud_init="""#cloud-config
 users:
   - name: odc2016
     shell: /bin/bash
@@ -257,22 +277,33 @@ power_state:
  mode: reboot
  timeout: 30
 """.replace("%%%CLOUD_SSH_KEY%%%",config_data['ssh_public_key'])
-  elif 'windows' in config_data['os_name'].lower():
-     image=None
-     cloud_init="""some cloud init for windows.."""
      
+  elif 'windows' in config_data['os_name'].lower():
+    image=None
+    cloud_init="""some cloud init for windows.."""
+    return None
   else:
-     return -1
-  if flavor is not None and image is not None:
-      server=nova.servers.create("ODC2016",flavor=flavor, image=image,userdata=cloud_init)
-      floating_ip=nova.floating_ips.create('net04_ext')
-      nova.servers.add(server, floating_ip)
-      return floating.ip # the ipv4
-      
-      
-   
+    return -1
 
-  pass
+  if flavor is not None and image is not None:
+    server=nova.servers.create("ODC2016",flavor=flavor, image=image,userdata=cloud_init)
+    status=server.status
+    while status == 'BUILD':
+      time.sleep(5)
+      server=nova.servers.get(server.id)
+      status=server.status
+    if status == 'ACTIVE':
+      floating_ip=nova.floating_ips.create('net04_ext')
+      nova.servers.add_floating_ip(server, floating_ip)
+      #allow everyone to connect to port 
+      nova.security_group_rules.create(parent_group_id=nova.security_groups.list()[0].id,
+                                       ip_protocol='tcp',
+                                       from_port=port,
+                                       to_port=port,
+                                       cidr='0.0.0.0/0')
+      return floating_ip.ip # the ipv4
+    else:
+      return None
 
 def get_data_from_ccdb():
   """
@@ -306,13 +337,37 @@ def get_data_from_ccdb():
   cloud_data = json.loads(content)
   return cloud_data
 
-def push_data_to_ccdb():
+def push_data_to_ccdb(setup_url,data):
   """
   This function will push data to CCDB, ip of the instances and inform that 
   the project is created.
   """
+  headers = { 'Authorization': "Token token=\"%s\"" % (cloud_api_key),
+              'Content-type': 'application/json'}
+  request = urllib2.Request(setup_url,
+                            headers=headers, data=data)
+  request.get_method = lambda: 'PUT'
+  attempt = 0
+  content = None
+
+  while attempt < 3:
+    try:
+      response = urllib2.urlopen(request, timeout = 5)
+      content = response.read()
+      break
+    except urllib2.URLError as e:
+      attempt += 1
+      print type(e)
+
+  if attempt == 3:
+    sys.stderr.write("Dang, couldn't put the data!\n")
+    sys.exit(1)
+
+  code = response.getcode()
+  if code != 200:
+    sys.stderr.write("Bad code from server! (%s)\n" % code)
+    sys.exit(1)
   
-  pass
 
 ccdb_cloud_data=get_data_from_ccdb()
 if not ccdb_cloud_data.has_key("tenants"):
@@ -324,9 +379,12 @@ for tenant in ccdb_tenants:
   if tenant['odc_application']['status'] == "approved":
     create_project(name=tenant['name'], description=tenant['description'], 
                    mentor=tenant['odc_application']['mentor']['username'], 
-                   configuration=tenant['configurations'])
-    build_instance(my_tenant=tenant['name'],config=tenant['odc_application'])
-  break
+                   configuration=tenant['configurations'][0])
+    tenant_ip=build_instance(my_tenant=tenant['name'],config_data=tenant['odc_application'])
+    if tenant_ip is not None:
+      print tenant_ip
+      put_data = {"tenant_ip": tenant_ip}
+      push_data_to_ccdb(tenant['odc_application']['setup_tenant_url'],data=json.dumps(put_data))
     
   
 
