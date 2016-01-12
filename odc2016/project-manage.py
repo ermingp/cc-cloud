@@ -51,7 +51,7 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
       print "Error, cannot create project and it doesn't exist"
       sys.exit(1)
     else:
-      print "project already exist"
+      print "project already exist: %s" % name
       project_exist=True
   try:
     # error on duplicate, no error when the user doesn't exist.
@@ -156,9 +156,12 @@ def build_instance(my_tenant, config_data):
   """
   nova=nova_client.Client('2',username,password,my_tenant, auth_url=auth_url)
   nova.authenticate()
+  cinder=cinder_client.Client('2',username,password,my_tenant, auth_url=auth_url)
+  cinder.authenticate()
   image=None
   flavor=None
   port=None
+
   flavor=nova.flavors.find(name="c2-3.75gb-92")
   if 'ubuntu' in config_data['os_name'].lower():
     image=nova.images.find(name='Ubuntu_14.04_Trusty-amd64-20150708')
@@ -286,12 +289,21 @@ power_state:
     return -1
 
   if flavor is not None and image is not None:
-    server=nova.servers.create("ODC2016",flavor=flavor, image=image,userdata=cloud_init)
+
+    volume=cinder.volumes.create(size=40,name='odc2016_boot_vol',imageRef=image.id)
+    status=volume.status
+    while status == 'downloading':
+      time.sleep(5)
+      volume=cinder.volumes.get(volume.id)
+      status=volume.status
+    block_device_mapping={'vda':volume.id}
+    server=nova.servers.create("ODC2016",flavor=flavor, block_device_mapping=block_device_mapping,userdata=cloud_init)
     status=server.status
     while status == 'BUILD':
       time.sleep(5)
       server=nova.servers.get(server.id)
       status=server.status
+
     if status == 'ACTIVE':
       floating_ip=nova.floating_ips.create('net04_ext')
       nova.servers.add_floating_ip(server, floating_ip)
@@ -317,7 +329,7 @@ def get_data_from_ccdb():
   content = None
   while attempt < 3:
     try:
-      response = urllib2.urlopen(request, timeout = 5)
+      response = urllib2.urlopen(request, timeout = 50)
       content = response.read()
       break
     except urllib2.URLError as e:
@@ -352,7 +364,7 @@ def push_data_to_ccdb(setup_url,data):
 
   while attempt < 3:
     try:
-      response = urllib2.urlopen(request, timeout = 5)
+      response = urllib2.urlopen(request, timeout = 50)
       content = response.read()
       break
     except urllib2.URLError as e:
@@ -377,6 +389,7 @@ if not ccdb_cloud_data.has_key("tenants"):
 ccdb_tenants = ccdb_cloud_data["tenants"]
 for tenant in ccdb_tenants:
   if tenant['odc_application']['status'] == "approved":
+    
     create_project(name=tenant['name'], description=tenant['description'], 
                    mentor=tenant['odc_application']['mentor']['username'], 
                    configuration=tenant['configurations'][0])
