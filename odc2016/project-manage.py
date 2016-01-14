@@ -31,9 +31,6 @@ except KeyError, e:
 keystone=ks_client.Client(username=username, password=password, \
                        tenant_name=tenant_name, auth_url=auth_url)
 
-
-
-
 def create_project(name=None, description=None, mentor=None, configuration=None):
   """
   This function will create the tenant, set the quota, create the network and 
@@ -56,7 +53,6 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
   try:
     # error on duplicate, no error when the user doesn't exist.
     project.add_user(user=mentor,role=find_role_id())
-    project.add_user(user='mgariepy',role=find_role_id())
     project.add_user(user='cccs',role=find_role_id())
     # hack to be able to create the vm in the project.
     project.add_user(user=username,role=find_role_id())
@@ -162,7 +158,7 @@ def build_instance(my_tenant, config_data):
   flavor=None
   port=None
 
-  flavor=nova.flavors.find(name="c2-3.75gb-92")
+  flavor=nova.flavors.find(name="c8-15gb-430")
   if 'ubuntu' in config_data['os_name'].lower():
     image=nova.images.find(name='Ubuntu_14.04_Trusty-amd64-20150708')
     port=22
@@ -173,7 +169,6 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - %%%CLOUD_SSH_KEY%%%
-      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMWvDGqgdTGEW44E/tfBAeOKYSRj0qA8JAQxCyP+gW039Sq6d7j2MVocdQQWnjMeW5PfvccRmGRsMizwNR1hoLvfA5R9S4pndl+EiAIpupolLntKqfAkX7zk5sV2wEQaU2k+wPGIvIf2t/ENxN9LvggYmnxNpxn8rhE9PYiLX7gqYETipprDLm4e7eO+SR5IuYMvHC9Dx6Oja6niZqwcC1OBZjglCJM/hJ4z672Y9PjI76Ah+BS4vlkDDwfT4dtoh4V13rrlOQ6RIky3IUcuAVyORjlUrnRGxGN5RDMLfPz+WJx1lEInXNa/CvRzu+zdJOLFprMKUn950FkYr6fdcd mgariepy@mgariepy-Latitude-E6330
 
 package_upgrade: true
 
@@ -225,9 +220,9 @@ power_state:
 users:
   - name: odc2016
     shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - %%%CLOUD_SSH_KEY%%%
-      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDMWvDGqgdTGEW44E/tfBAeOKYSRj0qA8JAQxCyP+gW039Sq6d7j2MVocdQQWnjMeW5PfvccRmGRsMizwNR1hoLvfA5R9S4pndl+EiAIpupolLntKqfAkX7zk5sV2wEQaU2k+wPGIvIf2t/ENxN9LvggYmnxNpxn8rhE9PYiLX7gqYETipprDLm4e7eO+SR5IuYMvHC9Dx6Oja6niZqwcC1OBZjglCJM/hJ4z672Y9PjI76Ah+BS4vlkDDwfT4dtoh4V13rrlOQ6RIky3IUcuAVyORjlUrnRGxGN5RDMLfPz+WJx1lEInXNa/CvRzu+zdJOLFprMKUn950FkYr6fdcd mgariepy@mgariepy-Latitude-E6330
 
 package_upgrade: true
 
@@ -290,29 +285,44 @@ power_state:
 
   if flavor is not None and image is not None:
 
-    volume=cinder.volumes.create(size=40,name='odc2016_boot_vol',imageRef=image.id)
+    volume=cinder.volumes.create(size=100,name='odc2016_boot_vol',imageRef=image.id)
     status=volume.status
-    while status == 'downloading':
+    loop=0
+    while status == 'downloading' or status == 'creating':
       time.sleep(5)
       volume=cinder.volumes.get(volume.id)
       status=volume.status
+      loop = loop + 1
+      if loop == 30:
+        print "error creating volume, please diag the problem, aborting"
+        return 1
+      print "volume status %s, %s" % (status, my_tenant)
     block_device_mapping={'vda':volume.id}
-    server=nova.servers.create("ODC2016",flavor=flavor, block_device_mapping=block_device_mapping,userdata=cloud_init)
+    server=nova.servers.create("ODC2016",flavor=flavor, image='',block_device_mapping=block_device_mapping,userdata=cloud_init)
     status=server.status
+    loop=0
     while status == 'BUILD':
       time.sleep(5)
       server=nova.servers.get(server.id)
       status=server.status
+      loop = loop + 1
+      if loop == 30:
+        print "error creating vm, please diag the problem, aborting"
+        return 2
+      print "server status %s, %s" % (status, my_tenant)
 
     if status == 'ACTIVE':
       floating_ip=nova.floating_ips.create('net04_ext')
       nova.servers.add_floating_ip(server, floating_ip)
       #allow everyone to connect to port 
-      nova.security_group_rules.create(parent_group_id=nova.security_groups.list()[0].id,
+      try:
+        nova.security_group_rules.create(parent_group_id=nova.security_groups.list()[0].id,
                                        ip_protocol='tcp',
                                        from_port=port,
                                        to_port=port,
                                        cidr='0.0.0.0/0')
+      except:
+        pass
       return floating_ip.ip # the ipv4
     else:
       return None
@@ -394,6 +404,9 @@ for tenant in ccdb_tenants:
                    mentor=tenant['odc_application']['mentor']['username'], 
                    configuration=tenant['configurations'][0])
     tenant_ip=build_instance(my_tenant=tenant['name'],config_data=tenant['odc_application'])
+    if tenant_ip == 1 or tenant_ip == 2:
+      print "error %d" % tenant_ip
+      continue #next project on error.
     if tenant_ip is not None:
       print tenant_ip
       put_data = {"tenant_ip": tenant_ip}
