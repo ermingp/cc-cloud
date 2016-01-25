@@ -281,7 +281,8 @@ power_state:
     cloud_init="""some cloud init for windows.."""
     return None
   else:
-    return -1
+    # Why was this "return -1"?
+    return None
 
   if flavor is not None and image is not None:
 
@@ -295,7 +296,7 @@ power_state:
       loop = loop + 1
       if loop == 30:
         print "error creating volume, please diag the problem, aborting"
-        return 1
+        return {'tenant_ip': 1}
       print "volume status %s, %s" % (status, my_tenant)
     block_device_mapping={'vda':volume.id}
     server=nova.servers.create("ODC2016",flavor=flavor, image='',block_device_mapping=block_device_mapping,userdata=cloud_init)
@@ -308,7 +309,7 @@ power_state:
       loop = loop + 1
       if loop == 30:
         print "error creating vm, please diag the problem, aborting"
-        return 2
+        return {'tenant_ip': 2}
       print "server status %s, %s" % (status, my_tenant)
 
     if status == 'ACTIVE':
@@ -323,7 +324,7 @@ power_state:
                                        cidr='0.0.0.0/0')
       except:
         pass
-      return floating_ip.ip # the ipv4
+      return {'tenant_ip': floating_ip.ip} # the ipv4
     else:
       return None
 
@@ -403,13 +404,15 @@ for tenant in ccdb_tenants:
     create_project(name=tenant['name'], description=tenant['description'], 
                    mentor=tenant['odc_application']['mentor']['username'], 
                    configuration=tenant['configurations'][0])
-    tenant_ip=build_instance(my_tenant=tenant['name'],config_data=tenant['odc_application'])
-    if tenant_ip == 1 or tenant_ip == 2:
-      print "error %d" % tenant_ip
-      continue #next project on error.
-    if tenant_ip is not None:
+    build_data=build_instance(my_tenant=tenant['name'],config_data=tenant['odc_application'])
+    if build_data is not None and 'tenant_ip'in build_data:
+      tenant_ip = build_data['tenant_ip']
+      if tenant_ip == 1 or tenant_ip == 2:
+        print "error %d" % tenant_ip
+        continue #next project on error.
       print tenant_ip
-      put_data = {"tenant_ip": tenant_ip}
+      # This passes the windows hash too if it's returned with build_data
+      put_data = build_data
       push_data_to_ccdb(tenant['odc_application']['setup_tenant_url'],data=json.dumps(put_data))
     
   
