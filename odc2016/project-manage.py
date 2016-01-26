@@ -166,6 +166,9 @@ def build_instance(my_tenant, config_data):
     image=nova.images.find(name='Ubuntu_14.04_Trusty-amd64-20150708')
     port=22
     cloud_init="""#cloud-config
+hostname: odc2016
+manage_etc_hosts: true
+
 users:
   - name: odc2016
     shell: /bin/bash
@@ -220,6 +223,9 @@ power_state:
     image=nova.images.find(name='CentOS-7-x86_64-GenericCloud-1508')
     port=22
     cloud_init="""#cloud-config
+hostname: odc2016
+manage_etc_hosts: true
+
 users:
   - name: odc2016
     shell: /bin/bash
