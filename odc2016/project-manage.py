@@ -150,6 +150,9 @@ def build_instance(my_tenant, config_data):
   configure security rules (ssh/rdesktop, + something else).
   this need to be run from the user account (cccs/cloud-adm or something else.)
   """
+  # This is what we return
+  build_data = {}
+
   nova=nova_client.Client('2',username,password,my_tenant, auth_url=auth_url)
   nova.authenticate()
   cinder=cinder_client.Client('2',username,password,my_tenant, auth_url=auth_url)
@@ -279,10 +282,10 @@ power_state:
   elif 'windows' in config_data['os_name'].lower():
     image=None
     cloud_init="""some cloud init for windows.."""
-    return None
+    return build_data
   else:
     # Why was this "return -1"?
-    return None
+    return build_data
 
   if flavor is not None and image is not None:
 
@@ -296,7 +299,8 @@ power_state:
       loop = loop + 1
       if loop == 30:
         print "error creating volume, please diag the problem, aborting"
-        return {'tenant_ip': 1}
+        build_data['tenant_ip'] = 1
+        return build_data
       print "volume status %s, %s" % (status, my_tenant)
     block_device_mapping={'vda':volume.id}
     server=nova.servers.create("ODC2016",flavor=flavor, image='',block_device_mapping=block_device_mapping,userdata=cloud_init)
@@ -309,7 +313,8 @@ power_state:
       loop = loop + 1
       if loop == 30:
         print "error creating vm, please diag the problem, aborting"
-        return {'tenant_ip': 2}
+        build_data['tenant_ip'] = 2
+        return build_data
       print "server status %s, %s" % (status, my_tenant)
 
     if status == 'ACTIVE':
@@ -324,7 +329,8 @@ power_state:
                                        cidr='0.0.0.0/0')
       except:
         pass
-      return {'tenant_ip': floating_ip.ip} # the ipv4
+      build_data['tenant_ip']: floating_ip.ip # the ipv4
+      return build_data # the ipv4
     else:
       return None
 
@@ -405,7 +411,7 @@ for tenant in ccdb_tenants:
                    mentor=tenant['odc_application']['mentor']['username'], 
                    configuration=tenant['configurations'][0])
     build_data=build_instance(my_tenant=tenant['name'],config_data=tenant['odc_application'])
-    if build_data is not None and 'tenant_ip'in build_data:
+    if build_data is not None and 'tenant_ip' in build_data:
       tenant_ip = build_data['tenant_ip']
       if tenant_ip == 1 or tenant_ip == 2:
         print "error %d" % tenant_ip
@@ -414,6 +420,3 @@ for tenant in ccdb_tenants:
       # This passes the windows hash too if it's returned with build_data
       put_data = build_data
       push_data_to_ccdb(tenant['odc_application']['setup_tenant_url'],data=json.dumps(put_data))
-    
-  
-
