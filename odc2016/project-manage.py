@@ -418,5 +418,4 @@ for tenant in ccdb_tenants:
         continue #next project on error.
       print tenant_ip
       # This passes the windows hash too if it's returned with build_data
-      put_data = build_data
-      push_data_to_ccdb(tenant['odc_application']['setup_tenant_url'],data=json.dumps(put_data))
+      push_data_to_ccdb(tenant['odc_application']['setup_tenant_url'],data=json.dumps(build_data))
