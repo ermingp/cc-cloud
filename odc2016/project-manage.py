@@ -68,12 +68,12 @@ def create_project(name=None, description=None, mentor=None, configuration=None)
   if project_exist == False:
     n_client=neutron_client.Client('2.0', auth_url=auth_url,username=username, \
                  tenant_name=os.environ['OS_TENANT_NAME'],password=password)
-    #neutron_quota={'quota': {'floatingip': config['floating-ips'],
-    #                         'network': config['networks'],
-    #                         'router': config['router'],
-    #                         'subnet': config['subnet'],
-    #                         'tenant_id':project.id}}
-    #n_client.
+    neutron_quota={'quota': {'floatingip': config['floating-ips'],
+                             'network': config['networks'],
+                             'router': config['router'],
+                             'subnet': config['subnet'] }}
+    n_client.update_quota(project.id, neutron_quota)
+
     network = { 'name': name.replace(' ','_')+'_network', 
                 'admin_state_up': True, 
                 'tenant_id':project.id }
